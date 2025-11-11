@@ -2,35 +2,121 @@
 """
 PDF Image Extractor with Visual Bounding Boxes
 A lightweight GUI tool to visualize and extract images from PDF files.
-Uses PyMuPDF (fitz) - no external dependencies required!
+Uses PyMuPDF (fitz) and PySide6 (Qt) for reliable cross-platform support.
 """
 
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-import fitz  # PyMuPDF
-from PIL import Image, ImageTk
-import io
-import os
 import sys
+import os
+import io
+import tempfile
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPushButton,
+    QLabel,
+    QLineEdit,
+    QSplitter,
+    QListWidget,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QScrollArea,
+    QTabWidget,
+    QFileDialog,
+    QMessageBox,
+    QListWidgetItem,
+    QFrame,
+)
+from PySide6.QtCore import Qt, QSize, QMimeData, QUrl, QByteArray, QBuffer, QIODevice
+from PySide6.QtGui import (
+    QPixmap,
+    QImage,
+    QPainter,
+    QPen,
+    QColor,
+    QDrag,
+    QKeySequence,
+    QShortcut,
+)
+import fitz  # PyMuPDF
+from PIL import Image
 
 
-class ImagePreviewPopup(tk.Toplevel):
+class DraggableListWidget(QListWidget):
+    """Custom QListWidget with drag-and-drop export support"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_app = None
+        self.setDragEnabled(True)
+        self.setSelectionMode(QListWidget.SingleSelection)
+
+    def startDrag(self, supportedActions):
+        """Handle drag start to export image file"""
+        if not self.parent_app or not self.currentItem():
+            return
+
+        # Get the index of the current item
+        index = self.currentRow()
+        if index >= len(self.parent_app.images_data):
+            return
+
+        try:
+            img_data = self.parent_app.images_data[index]
+            xref = img_data["xref"]
+
+            # Extract the image
+            base_image = self.parent_app.pdf_doc.extract_image(xref)
+            image_bytes = base_image["image"]
+
+            # Convert to PIL Image then save to temp file
+            pil_image = Image.open(io.BytesIO(image_bytes))
+
+            # Create temp file
+            filename = (
+                f'page{self.parent_app.current_page+1}_image{img_data["index"]+1}.png'
+            )
+            temp_dir = tempfile.gettempdir()
+            temp_path = os.path.join(temp_dir, filename)
+
+            pil_image.save(temp_path, "PNG")
+            self.parent_app.temp_files.append(temp_path)
+
+            # Create drag object with file URL
+            drag = QDrag(self)
+            mime_data = QMimeData()
+            mime_data.setUrls([QUrl.fromLocalFile(temp_path)])
+            drag.setMimeData(mime_data)
+
+            # Execute drag
+            drag.exec(Qt.CopyAction)
+
+        except Exception as e:
+            print(f"Error during drag: {e}")
+
+
+class ImagePreviewPopup(QWidget):
     """Popup window to show image preview"""
 
     def __init__(self, parent, pil_image, title="Image Preview"):
-        super().__init__(parent)
-        self.title(title)
-        self.overrideredirect(True)  # Remove window decorations
-        self.attributes("-topmost", True)  # Always on top
+        super().__init__(
+            parent, Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        )
 
-        # Add border
-        self.configure(bg="black", padx=2, pady=2)
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
+        self.setStyleSheet("background-color: white; border: 2px solid black;")
 
-        # Create frame for content
-        frame = tk.Frame(self, bg="white")
-        frame.pack()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(5, 5, 5, 5)
 
-        # Resize image if too large
+        # Title
+        title_label = QLabel(title)
+        title_label.setStyleSheet("font-weight: bold; border: none;")
+        layout.addWidget(title_label, alignment=Qt.AlignCenter)
+
+        # Image
         max_size = 400
         img_width, img_height = pil_image.size
         if img_width > max_size or img_height > max_size:
@@ -40,411 +126,301 @@ class ImagePreviewPopup(tk.Toplevel):
             pil_image = pil_image.resize(
                 (new_width, new_height), Image.Resampling.LANCZOS
             )
+            img_width, img_height = new_width, new_height
 
-        # Add title label
-        title_label = tk.Label(
-            frame, text=title, bg="white", font=("TkDefaultFont", 9, "bold")
-        )
-        title_label.pack(pady=(5, 2))
+        # Convert PIL to QPixmap
+        img_byte_arr = io.BytesIO()
+        pil_image.save(img_byte_arr, format="PNG")
+        img_byte_arr = img_byte_arr.getvalue()
 
-        # Show image
-        self.photo = ImageTk.PhotoImage(pil_image)
-        img_label = tk.Label(frame, image=self.photo, bg="white")
-        img_label.pack(padx=5, pady=5)
+        qimage = QImage.fromData(img_byte_arr)
+        pixmap = QPixmap.fromImage(qimage)
+
+        img_label = QLabel()
+        img_label.setPixmap(pixmap)
+        img_label.setStyleSheet("border: none;")
+        layout.addWidget(img_label, alignment=Qt.AlignCenter)
 
         # Size info
-        size_text = f"{img_width}×{img_height} pixels"
-        size_label = tk.Label(
-            frame, text=size_text, bg="white", font=("TkDefaultFont", 8)
-        )
-        size_label.pack(pady=(2, 5))
+        size_label = QLabel(f"{img_width}×{img_height} pixels")
+        size_label.setStyleSheet("font-size: 9px; border: none;")
+        layout.addWidget(size_label, alignment=Qt.AlignCenter)
 
-        # Update geometry to get actual size
-        self.update_idletasks()
-        popup_width = self.winfo_width()
-        popup_height = self.winfo_height()
-
-        # Get screen dimensions
-        screen_width = parent.winfo_screenwidth()
-        screen_height = parent.winfo_screenheight()
-
-        # Get cursor position
-        cursor_x = parent.winfo_pointerx()
-        cursor_y = parent.winfo_pointery()
-
-        # Position to the left of cursor by default
-        x = cursor_x - popup_width - 15
-        y = cursor_y - popup_height // 2
-
-        # Adjust if goes off left edge - put it to the right instead
-        if x < 0:
-            x = cursor_x + 15
-
-        # Adjust if goes off right edge
-        if x + popup_width > screen_width:
-            x = screen_width - popup_width - 10
-
-        # Adjust if goes off top edge
-        if y < 0:
-            y = 10
-
-        # Adjust if goes off bottom edge
-        if y + popup_height > screen_height:
-            y = screen_height - popup_height - 10
-
-        self.geometry(f"+{x}+{y}")
+        self.setLayout(layout)
+        self.adjustSize()
 
 
-class PDFImageExtractor:
-    def __init__(self, root, initial_file=None):
-        self.root = root
-        self.root.title("PDF Image Extractor")
-        self.root.geometry("1400x900")
+class PDFImageExtractor(QMainWindow):
+    def __init__(self, initial_file=None):
+        super().__init__()
+        self.setWindowTitle("PDF Image Extractor")
+        self.resize(1400, 900)
 
-        self.pdf_path = None
         self.pdf_doc = None
         self.current_page = 0
-        self.images_data = []  # Store image data with coordinates
-        self.canvas_image = None
-        self.current_pix = None  # Store current page pixmap
+        self.images_data = []
         self.zoom_level = 1.0
-        self.preview_popup = None  # Current preview popup
-        self.preview_index = None  # Index of currently previewed image
-        self.current_view = "outline"  # "outline" or "thumbnails"
-
-        # Thumbnail cache
-        self.thumbnail_cache = {}
-        self.thumbnail_size = 150
+        self.preview_popup = None
+        self.temp_files = []
 
         self.setup_ui()
 
-        # Bind window resize event
-        self.root.bind("<Configure>", self.on_window_resize)
-        self.last_width = self.root.winfo_width()
-        self.last_height = self.root.winfo_height()
-
         # Open initial file if provided
         if initial_file and os.path.exists(initial_file):
-            self.root.after(100, lambda: self.open_pdf_file(initial_file))
+            self.open_pdf_file(initial_file)
 
     def setup_ui(self):
-        # Top toolbar
-        toolbar = ttk.Frame(self.root)
-        toolbar.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+        # Central widget
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(5, 5, 5, 5)
 
-        ttk.Button(toolbar, text="Open PDF", command=self.open_pdf).pack(
-            side=tk.LEFT, padx=2
-        )
+        # Toolbar
+        toolbar = QWidget()
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(0, 0, 0, 0)
 
-        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
+        self.open_btn = QPushButton("Open PDF")
+        self.open_btn.clicked.connect(self.open_pdf)
+        toolbar_layout.addWidget(self.open_btn)
 
-        ttk.Button(toolbar, text="◀", command=self.prev_page, width=3).pack(
-            side=tk.LEFT, padx=2
-        )
-        ttk.Button(toolbar, text="▶", command=self.next_page, width=3).pack(
-            side=tk.LEFT, padx=2
-        )
+        toolbar_layout.addWidget(QLabel("|"))
 
-        ttk.Label(toolbar, text="Page:").pack(side=tk.LEFT, padx=(10, 2))
-        self.page_entry = ttk.Entry(toolbar, width=5)
-        self.page_entry.pack(side=tk.LEFT, padx=2)
-        self.page_entry.bind("<Return>", lambda e: self.goto_page())
-        ttk.Button(toolbar, text="Go", command=self.goto_page).pack(
-            side=tk.LEFT, padx=2
-        )
+        self.prev_btn = QPushButton("◀")
+        self.prev_btn.clicked.connect(self.prev_page)
+        toolbar_layout.addWidget(self.prev_btn)
 
-        self.page_label = ttk.Label(toolbar, text="/ 0")
-        self.page_label.pack(side=tk.LEFT, padx=2)
+        self.next_btn = QPushButton("▶")
+        self.next_btn.clicked.connect(self.next_page)
+        toolbar_layout.addWidget(self.next_btn)
 
-        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
+        toolbar_layout.addWidget(QLabel("Page:"))
+        self.page_entry = QLineEdit()
+        self.page_entry.setMaximumWidth(50)
+        self.page_entry.returnPressed.connect(self.goto_page)
+        toolbar_layout.addWidget(self.page_entry)
 
-        # Zoom controls
-        ttk.Label(toolbar, text="Zoom:").pack(side=tk.LEFT, padx=(10, 2))
-        ttk.Button(toolbar, text="−", command=self.zoom_out, width=3).pack(
-            side=tk.LEFT, padx=2
-        )
-        self.zoom_label = ttk.Label(toolbar, text="100%", width=6)
-        self.zoom_label.pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="+", command=self.zoom_in, width=3).pack(
-            side=tk.LEFT, padx=2
-        )
-        ttk.Button(toolbar, text="Fit", command=self.zoom_fit, width=4).pack(
-            side=tk.LEFT, padx=2
-        )
+        self.go_btn = QPushButton("Go")
+        self.go_btn.clicked.connect(self.goto_page)
+        toolbar_layout.addWidget(self.go_btn)
 
-        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
+        self.page_label = QLabel("/ 0")
+        toolbar_layout.addWidget(self.page_label)
 
-        ttk.Button(toolbar, text="Extract All", command=self.extract_all_images).pack(
-            side=tk.LEFT, padx=2
-        )
+        toolbar_layout.addWidget(QLabel("|"))
 
-        self.status_label = ttk.Label(toolbar, text="No PDF loaded")
-        self.status_label.pack(side=tk.RIGHT, padx=10)
+        toolbar_layout.addWidget(QLabel("Zoom:"))
+        self.zoom_out_btn = QPushButton("−")
+        self.zoom_out_btn.clicked.connect(self.zoom_out)
+        toolbar_layout.addWidget(self.zoom_out_btn)
 
-        # Main content area
-        content_frame = ttk.Frame(self.root)
-        content_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.zoom_label = QLabel("100%")
+        self.zoom_label.setMinimumWidth(50)
+        toolbar_layout.addWidget(self.zoom_label)
 
-        # Left sidebar with tabs
-        left_frame = ttk.Frame(content_frame, width=220)
-        left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
-        left_frame.pack_propagate(False)
+        self.zoom_in_btn = QPushButton("+")
+        self.zoom_in_btn.clicked.connect(self.zoom_in)
+        toolbar_layout.addWidget(self.zoom_in_btn)
 
-        # Tab control for outline/thumbnails
-        self.left_notebook = ttk.Notebook(left_frame)
-        self.left_notebook.pack(fill=tk.BOTH, expand=True)
+        self.fit_btn = QPushButton("Fit")
+        self.fit_btn.clicked.connect(self.zoom_fit)
+        toolbar_layout.addWidget(self.fit_btn)
+
+        toolbar_layout.addWidget(QLabel("|"))
+
+        self.extract_all_btn = QPushButton("Extract All")
+        self.extract_all_btn.clicked.connect(self.extract_all_images)
+        toolbar_layout.addWidget(self.extract_all_btn)
+
+        toolbar_layout.addStretch()
+
+        self.status_label = QLabel("No PDF loaded")
+        toolbar_layout.addWidget(self.status_label)
+
+        main_layout.addWidget(toolbar)
+
+        # Main splitter
+        splitter = QSplitter(Qt.Horizontal)
+
+        # Left panel (Outline/Thumbnails)
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.left_tabs = QTabWidget()
 
         # Outline tab
-        outline_frame = ttk.Frame(self.left_notebook)
-        self.left_notebook.add(outline_frame, text="Outline")
-
-        self.outline_tree = ttk.Treeview(outline_frame, show="tree")
-        outline_scroll = ttk.Scrollbar(
-            outline_frame, orient=tk.VERTICAL, command=self.outline_tree.yview
-        )
-        self.outline_tree.configure(yscrollcommand=outline_scroll.set)
-        self.outline_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        outline_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.outline_tree.bind("<<TreeviewSelect>>", self.on_outline_select)
+        self.outline_tree = QTreeWidget()
+        self.outline_tree.setHeaderHidden(True)
+        self.outline_tree.itemClicked.connect(self.on_outline_clicked)
+        self.left_tabs.addTab(self.outline_tree, "Outline")
 
         # Thumbnails tab
-        thumb_frame = ttk.Frame(self.left_notebook)
-        self.left_notebook.add(thumb_frame, text="Thumbnails")
+        thumb_widget = QWidget()
+        thumb_layout = QVBoxLayout(thumb_widget)
+        thumb_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Canvas for thumbnails with scrollbar
-        thumb_canvas_frame = ttk.Frame(thumb_frame)
-        thumb_canvas_frame.pack(fill=tk.BOTH, expand=True)
+        self.thumb_scroll = QScrollArea()
+        self.thumb_scroll.setWidgetResizable(True)
+        self.thumb_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-        thumb_scroll = ttk.Scrollbar(thumb_canvas_frame, orient=tk.VERTICAL)
-        thumb_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.thumb_container = QWidget()
+        self.thumb_layout = QVBoxLayout(self.thumb_container)
+        self.thumb_layout.setAlignment(Qt.AlignTop)
+        self.thumb_scroll.setWidget(self.thumb_container)
 
-        self.thumb_canvas = tk.Canvas(
-            thumb_canvas_frame, bg="white", yscrollcommand=thumb_scroll.set, width=200
-        )
-        self.thumb_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        thumb_scroll.config(command=self.thumb_canvas.yview)
+        thumb_layout.addWidget(self.thumb_scroll)
+        self.left_tabs.addTab(thumb_widget, "Thumbnails")
 
-        self.thumb_canvas.bind("<Button-1>", self.on_thumbnail_click)
+        left_layout.addWidget(self.left_tabs)
+        left_widget.setMinimumWidth(220)
+        left_widget.setMaximumWidth(300)
 
-        # Bind mouse wheel for thumbnail scrolling
-        self.thumb_canvas.bind("<MouseWheel>", self.on_thumb_mousewheel)  # Windows/Mac
-        self.thumb_canvas.bind(
-            "<Button-4>", self.on_thumb_mousewheel
-        )  # Linux scroll up
-        self.thumb_canvas.bind(
-            "<Button-5>", self.on_thumb_mousewheel
-        )  # Linux scroll down
+        splitter.addWidget(left_widget)
 
-        # Canvas for PDF display (center)
-        canvas_frame = ttk.Frame(content_frame)
-        canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Center panel (PDF display)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(False)
+        self.scroll_area.setAlignment(Qt.AlignCenter)
+        self.scroll_area.setStyleSheet("background-color: #f0f0f0;")
 
-        # Add scrollbars
-        h_scroll = ttk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL)
-        h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+        self.pdf_label = QLabel()
+        self.pdf_label.setScaledContents(False)
+        self.scroll_area.setWidget(self.pdf_label)
 
-        v_scroll = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL)
-        v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        splitter.addWidget(self.scroll_area)
 
-        self.canvas = tk.Canvas(
-            canvas_frame,
-            bg="#f0f0f0",
-            xscrollcommand=h_scroll.set,
-            yscrollcommand=v_scroll.set,
-        )
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Right panel (Image list)
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
 
-        h_scroll.config(command=self.canvas.xview)
-        v_scroll.config(command=self.canvas.yview)
+        list_label = QLabel("Images on Page")
+        list_label.setStyleSheet("font-weight: bold; padding: 5px;")
+        right_layout.addWidget(list_label)
 
-        # Bind keyboard arrow keys for page navigation
-        self.root.bind("<Left>", lambda e: self.prev_page())
-        self.root.bind("<Right>", lambda e: self.next_page())
+        self.image_list = DraggableListWidget()
+        self.image_list.parent_app = self
+        self.image_list.itemClicked.connect(self.on_image_clicked)
+        self.image_list.itemEntered.connect(self.on_image_hover)
+        self.image_list.setMouseTracking(True)
+        right_layout.addWidget(self.image_list)
 
-        # Info panel (right) - now with interactive list
-        info_frame = ttk.LabelFrame(content_frame, text="Images on Page", width=280)
-        info_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
-        info_frame.pack_propagate(False)
+        instructions = QLabel("Hover to preview\nClick to save\nDrag to export")
+        instructions.setAlignment(Qt.AlignCenter)
+        instructions.setStyleSheet("color: gray; padding: 5px;")
+        right_layout.addWidget(instructions)
 
-        # Create listbox for images
-        list_frame = ttk.Frame(info_frame)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        right_widget.setMinimumWidth(250)
+        right_widget.setMaximumWidth(350)
 
-        info_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
-        info_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        splitter.addWidget(right_widget)
 
-        self.image_listbox = tk.Listbox(
-            list_frame,
-            yscrollcommand=info_scroll.set,
-            font=("TkDefaultFont", 9),
-            activestyle="none",
-        )
-        self.image_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        info_scroll.config(command=self.image_listbox.yview)
+        # Set splitter proportions
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
 
-        # Bind events
-        self.image_listbox.bind("<Motion>", self.on_image_list_hover)
-        self.image_listbox.bind("<Leave>", self.on_image_list_leave)
-        self.image_listbox.bind("<Button-1>", self.on_image_list_click)
+        main_layout.addWidget(splitter)
 
-        # Instructions
-        instructions = ttk.Label(
-            info_frame,
-            text="Hover to preview\nClick to save",
-            justify=tk.CENTER,
-            foreground="gray",
-        )
-        instructions.pack(side=tk.BOTTOM, pady=5)
+        # Keyboard shortcuts
+        QShortcut(QKeySequence(Qt.Key_Left), self, self.prev_page)
+        QShortcut(QKeySequence(Qt.Key_Right), self, self.next_page)
 
     def open_pdf(self):
-        file_path = filedialog.askopenfilename(
-            title="Select PDF file",
-            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select PDF file", "", "PDF files (*.pdf);;All files (*)"
         )
-
         if file_path:
             self.open_pdf_file(file_path)
 
     def open_pdf_file(self, file_path):
-        """Open a PDF file from a given path"""
         try:
             if self.pdf_doc:
                 self.pdf_doc.close()
 
-            self.pdf_path = file_path
             self.pdf_doc = fitz.open(file_path)
             self.current_page = 0
             self.zoom_level = 1.0
-            self.thumbnail_cache = {}
 
             self.load_outline()
             self.load_thumbnails()
-
-            # Display first page
             self.display_page()
 
-            # Apply fit-to-window zoom after a short delay
-            self.root.after(100, self.zoom_fit)
+            # Apply fit after display
+            QApplication.processEvents()
+            self.zoom_fit()
 
-            self.status_label.config(text=f"Loaded: {os.path.basename(file_path)}")
-            self.page_label.config(text=f"/ {len(self.pdf_doc)}")
+            self.status_label.setText(f"Loaded: {os.path.basename(file_path)}")
+            self.page_label.setText(f"/ {len(self.pdf_doc)}")
 
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to open PDF: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to open PDF: {str(e)}")
 
     def load_outline(self):
-        """Load PDF outline/table of contents"""
-        self.outline_tree.delete(*self.outline_tree.get_children())
+        self.outline_tree.clear()
 
-        # Get PDF outline/TOC
         toc = self.pdf_doc.get_toc()
 
         if toc:
-            # Build tree from TOC
-            parent_stack = [("", 0)]  # (parent_id, level)
+            parent_stack = [(None, 0)]
 
             for level, title, page_num in toc:
-                # Find appropriate parent
                 while parent_stack and parent_stack[-1][1] >= level:
                     parent_stack.pop()
 
-                parent = parent_stack[-1][0] if parent_stack else ""
+                parent = parent_stack[-1][0] if parent_stack else None
 
-                # Insert item
-                item_id = self.outline_tree.insert(
-                    parent,
-                    "end",
-                    text=f"{title} (p.{page_num})",
-                    values=(page_num - 1,),  # Store 0-indexed page number
-                )
+                item = QTreeWidgetItem([f"{title} (p.{page_num})"])
+                item.setData(0, Qt.UserRole, page_num - 1)
 
-                parent_stack.append((item_id, level))
+                if parent:
+                    parent.addChild(item)
+                else:
+                    self.outline_tree.addTopLevelItem(item)
+
+                parent_stack.append((item, level))
         else:
-            # No outline, just list pages
             for i in range(len(self.pdf_doc)):
-                self.outline_tree.insert("", "end", text=f"Page {i+1}", values=(i,))
+                item = QTreeWidgetItem([f"Page {i+1}"])
+                item.setData(0, Qt.UserRole, i)
+                self.outline_tree.addTopLevelItem(item)
 
     def load_thumbnails(self):
-        """Generate thumbnails for all pages"""
-        if not self.pdf_doc:
-            return
+        # Clear existing thumbnails
+        while self.thumb_layout.count():
+            child = self.thumb_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
 
-        self.thumb_canvas.delete("all")
-        self.thumbnail_cache = {}
-
-        y_offset = 10
         for i in range(len(self.pdf_doc)):
-            # Generate thumbnail
             page = self.pdf_doc[i]
-            mat = fitz.Matrix(0.2, 0.2)  # Small scale for thumbnails
+            mat = fitz.Matrix(0.2, 0.2)
             pix = page.get_pixmap(matrix=mat, alpha=False)
 
-            # Convert to PIL
+            # Convert to QPixmap
             img_data = pix.tobytes("ppm")
-            thumb = Image.open(io.BytesIO(img_data))
-
-            # Resize to fit width
-            aspect = thumb.height / thumb.width
-            new_width = self.thumbnail_size
-            new_height = int(new_width * aspect)
-            thumb = thumb.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-            # Add border
-            bordered = Image.new("RGB", (new_width + 4, new_height + 4), "gray")
-            bordered.paste(thumb, (2, 2))
-
-            # Store in cache
-            photo = ImageTk.PhotoImage(bordered)
-            self.thumbnail_cache[i] = photo
-
-            # Draw on canvas
-            self.thumb_canvas.create_image(
-                10, y_offset, anchor=tk.NW, image=photo, tags=f"thumb_{i}"
+            qimage = QImage(
+                img_data, pix.width, pix.height, pix.stride, QImage.Format_RGB888
             )
-            self.thumb_canvas.create_text(
-                new_width // 2 + 10,
-                y_offset + new_height + 8,
-                text=f"Page {i+1}",
-                tags=f"thumb_{i}",
-            )
+            pixmap = QPixmap.fromImage(qimage)
 
-            y_offset += new_height + 30
+            # Create clickable thumbnail
+            thumb_btn = QPushButton()
+            thumb_btn.setIcon(pixmap)
+            thumb_btn.setIconSize(QSize(150, int(150 * pix.height / pix.width)))
+            thumb_btn.setText(f"Page {i+1}")
+            thumb_btn.setStyleSheet("text-align: center;")
+            thumb_btn.clicked.connect(lambda checked, page=i: self.goto_page_num(page))
 
-        # Update scroll region
-        self.thumb_canvas.config(scrollregion=self.thumb_canvas.bbox("all"))
+            self.thumb_layout.addWidget(thumb_btn)
 
-    def on_thumb_mousewheel(self, event):
-        """Handle mouse wheel scrolling in thumbnail canvas"""
-        if event.num == 4 or event.delta > 0:  # Scroll up
-            self.thumb_canvas.yview_scroll(-1, "units")
-        elif event.num == 5 or event.delta < 0:  # Scroll down
-            self.thumb_canvas.yview_scroll(1, "units")
-
-    def on_thumbnail_click(self, event):
-        """Handle thumbnail click"""
-        # Convert to canvas coordinates (account for scrolling)
-        canvas_y = self.thumb_canvas.canvasy(event.y)
-
-        # Find which thumbnail was clicked
-        item = self.thumb_canvas.find_closest(event.x, canvas_y)
-        if item:
-            tags = self.thumb_canvas.gettags(item[0])
-            for tag in tags:
-                if tag.startswith("thumb_"):
-                    page_num = int(tag.split("_")[1])
-                    self.current_page = page_num
-                    self.display_page()
-                    break
-
-    def on_outline_select(self, event):
-        selection = self.outline_tree.selection()
-        if selection:
-            item = self.outline_tree.item(selection[0])
-            values = item.get("values")
-            if values:
-                page_num = int(values[0])
-                self.current_page = page_num
-                self.display_page()
+    def on_outline_clicked(self, item):
+        page_num = item.data(0, Qt.UserRole)
+        if page_num is not None:
+            self.current_page = page_num
+            self.display_page()
 
     def display_page(self):
         if not self.pdf_doc:
@@ -453,23 +429,27 @@ class PDFImageExtractor:
         try:
             page = self.pdf_doc[self.current_page]
 
-            # Render page with current zoom level
-            zoom = self.zoom_level * 2.0  # Base zoom multiplier
+            # Render page
+            zoom = self.zoom_level * 2.0
             mat = fitz.Matrix(zoom, zoom)
-            self.current_pix = page.get_pixmap(matrix=mat, alpha=False)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
 
-            # Convert pixmap to PIL Image
-            img_data = self.current_pix.tobytes("ppm")
-            self.page_image = Image.open(io.BytesIO(img_data))
+            # Convert to QPixmap
+            img_data = pix.tobytes("ppm")
+            qimage = QImage(
+                img_data, pix.width, pix.height, pix.stride, QImage.Format_RGB888
+            )
+            pixmap = QPixmap.fromImage(qimage)
 
-            # Extract images and their coordinates
+            self.pdf_label.setPixmap(pixmap)
+            self.pdf_label.resize(pixmap.size())
+
+            # Extract images
             self.images_data = []
             image_list = page.get_images()
 
             for idx, img_info in enumerate(image_list):
                 xref = img_info[0]
-
-                # Get image bounding boxes on the page
                 rects = page.get_image_rects(xref)
 
                 for rect_idx, rect in enumerate(rects):
@@ -477,7 +457,6 @@ class PDFImageExtractor:
                     width = x1 - x0
                     height = y1 - y0
 
-                    # Skip images that are too small (likely artifacts or invisible)
                     if width < 1 or height < 1:
                         continue
 
@@ -492,151 +471,114 @@ class PDFImageExtractor:
                             "width": width,
                             "height": height,
                             "name": f"image_{xref}_{rect_idx}",
-                            "pdf_rect": rect,
                         }
                     )
 
-            # Calculate scale factors
-            pdf_width = page.rect.width
-            pdf_height = page.rect.height
-            img_width, img_height = self.page_image.size
-
-            self.scale_x = img_width / pdf_width
-            self.scale_y = img_height / pdf_height
-
-            # Store scaled coordinates
-            for img_data in self.images_data:
-                img_data["scaled_x0"] = img_data["x0"] * self.scale_x
-                img_data["scaled_y0"] = img_data["y0"] * self.scale_y
-                img_data["scaled_x1"] = img_data["x1"] * self.scale_x
-                img_data["scaled_y1"] = img_data["y1"] * self.scale_y
-
-            # Update display
-            self.update_canvas()
             self.update_image_list()
 
             # Update page entry
-            self.page_entry.delete(0, tk.END)
-            self.page_entry.insert(0, str(self.current_page + 1))
+            self.page_entry.setText(str(self.current_page + 1))
 
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to display page: {str(e)}")
-
-    def update_canvas(self):
-        """Update canvas with current page image"""
-        # Display on canvas (no highlighting on main view)
-        self.canvas_image = ImageTk.PhotoImage(self.page_image)
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.canvas_image)
-        self.canvas.config(scrollregion=self.canvas.bbox(tk.ALL))
+            QMessageBox.critical(self, "Error", f"Failed to display page: {str(e)}")
 
     def update_image_list(self):
-        """Update the image list in the right panel"""
-        self.image_listbox.delete(0, tk.END)
+        self.image_list.clear()
 
         if not self.images_data:
-            self.image_listbox.insert(tk.END, "No images found")
+            self.image_list.addItem("No images found")
             return
 
         for img_data in self.images_data:
-            info = (
-                f"Image #{img_data['index']+1}  "
-                f"{int(img_data['width'])}×{int(img_data['height'])}"
-            )
-            self.image_listbox.insert(tk.END, info)
+            text = f"Image #{img_data['index']+1}  {int(img_data['width'])}×{int(img_data['height'])}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, img_data["index"])
+            self.image_list.addItem(item)
 
-    def on_image_list_hover(self, event):
-        """Show popup preview when hovering over list item"""
-        index = self.image_listbox.nearest(event.y)
-        if index < len(self.images_data):
-            # Only create new popup if index changed
-            if index == self.preview_index and self.preview_popup:
-                return  # Already showing popup for this image
+    def on_image_hover(self, item):
+        index = item.data(Qt.UserRole)
+        if index is None or index >= len(self.images_data):
+            return
 
-            # Close existing popup
-            if self.preview_popup:
-                self.preview_popup.destroy()
-                self.preview_popup = None
-
-            # Update preview index
-            self.preview_index = index
-
-            # Extract and show the actual image
-            try:
-                img_data = self.images_data[index]
-                xref = img_data["xref"]
-
-                # Extract the image from PDF
-                base_image = self.pdf_doc.extract_image(xref)
-                image_bytes = base_image["image"]
-
-                # Convert to PIL Image
-                pil_image = Image.open(io.BytesIO(image_bytes))
-
-                # Show popup
-                title = f"Image #{img_data['index']+1}"
-                self.preview_popup = ImagePreviewPopup(self.root, pil_image, title)
-
-            except Exception as e:
-                print(f"Error showing preview: {e}")
-
-    def on_image_list_leave(self, event):
-        """Close popup when leaving list"""
         if self.preview_popup:
-            self.preview_popup.destroy()
-            self.preview_popup = None
-        self.preview_index = None
-
-    def on_image_list_click(self, event):
-        """Save image when clicking on list item"""
-        # Close popup first
-        if self.preview_popup:
-            self.preview_popup.destroy()
+            self.preview_popup.close()
             self.preview_popup = None
 
-        index = self.image_listbox.nearest(event.y)
-        if index < len(self.images_data):
-            self.save_image(self.images_data[index])
-
-    def save_image(self, img_data):
-        """Extract and save the selected image"""
         try:
+            img_data = self.images_data[index]
             xref = img_data["xref"]
 
-            # Extract the image from PDF
             base_image = self.pdf_doc.extract_image(xref)
             image_bytes = base_image["image"]
-
-            # Convert to PIL Image
             pil_image = Image.open(io.BytesIO(image_bytes))
 
-            # Ask user where to save
+            self.preview_popup = ImagePreviewPopup(
+                self, pil_image, f"Image #{img_data['index']+1}"
+            )
+
+            # Position near cursor
+            cursor_pos = self.cursor().pos()
+            popup_x = cursor_pos.x() - self.preview_popup.width() - 15
+            popup_y = cursor_pos.y() - self.preview_popup.height() // 2
+
+            # Ensure on screen
+            screen = QApplication.primaryScreen().geometry()
+            if popup_x < 0:
+                popup_x = cursor_pos.x() + 15
+            if popup_y < 0:
+                popup_y = 10
+            if popup_y + self.preview_popup.height() > screen.height():
+                popup_y = screen.height() - self.preview_popup.height() - 10
+
+            self.preview_popup.move(popup_x, popup_y)
+            self.preview_popup.show()
+
+        except Exception as e:
+            print(f"Error showing preview: {e}")
+
+    def on_image_clicked(self, item):
+        if self.preview_popup:
+            self.preview_popup.close()
+            self.preview_popup = None
+
+        index = item.data(Qt.UserRole)
+        if index is None or index >= len(self.images_data):
+            return
+
+        self.save_image(self.images_data[index])
+
+    def save_image(self, img_data):
+        try:
+            xref = img_data["xref"]
+            base_image = self.pdf_doc.extract_image(xref)
+            image_bytes = base_image["image"]
+            pil_image = Image.open(io.BytesIO(image_bytes))
+
             default_name = f"page{self.current_page+1}_image{img_data['index']+1}.png"
-            file_path = filedialog.asksaveasfilename(
-                defaultextension=".png",
-                initialfile=default_name,
-                filetypes=[
-                    ("PNG files", "*.png"),
-                    ("JPEG files", "*.jpg"),
-                    ("All files", "*.*"),
-                ],
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Image",
+                default_name,
+                "PNG files (*.png);;JPEG files (*.jpg);;All files (*)",
             )
 
             if file_path:
                 pil_image.save(file_path)
-                messagebox.showinfo("Success", f"Image saved to:\n{file_path}")
+                QMessageBox.information(
+                    self, "Success", f"Image saved to:\n{file_path}"
+                )
 
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to save image: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to save image: {str(e)}")
 
     def extract_all_images(self):
-        """Extract all images from current page"""
         if not self.images_data:
-            messagebox.showinfo("Info", "No images found on this page.")
+            QMessageBox.information(self, "Info", "No images found on this page.")
             return
 
-        # Ask for directory
-        directory = filedialog.askdirectory(title="Select directory to save images")
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select directory to save images"
+        )
 
         if directory:
             try:
@@ -645,7 +587,6 @@ class PDFImageExtractor:
 
                 for img_data in self.images_data:
                     xref = img_data["xref"]
-
                     if xref in saved_xrefs:
                         continue
 
@@ -661,70 +602,16 @@ class PDFImageExtractor:
                     saved_count += 1
                     saved_xrefs.add(xref)
 
-                messagebox.showinfo(
+                QMessageBox.information(
+                    self,
                     "Success",
                     f"Extracted {saved_count} unique image(s) to:\n{directory}",
                 )
 
             except Exception as e:
-                messagebox.showerror("Error", f"Failed to extract images: {str(e)}")
-
-    def zoom_in(self):
-        """Zoom in by 25%"""
-        self.zoom_level = min(self.zoom_level * 1.25, 4.0)
-        self.update_zoom_label()
-        self.display_page()
-
-    def zoom_out(self):
-        """Zoom out by 25%"""
-        self.zoom_level = max(self.zoom_level * 0.8, 0.25)
-        self.update_zoom_label()
-        self.display_page()
-
-    def zoom_fit(self):
-        """Fit page to canvas"""
-        if not self.pdf_doc:
-            return
-
-        page = self.pdf_doc[self.current_page]
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-
-        if canvas_width > 1 and canvas_height > 1:
-            # Calculate zoom to fit
-            scale_x = canvas_width / (page.rect.width * 2.0)
-            scale_y = canvas_height / (page.rect.height * 2.0)
-            self.zoom_level = min(scale_x, scale_y, 1.0)
-            self.update_zoom_label()
-            self.display_page()
-
-    def update_zoom_label(self):
-        """Update zoom percentage label"""
-        self.zoom_label.config(text=f"{int(self.zoom_level * 100)}%")
-
-    def on_window_resize(self, event):
-        """Handle window resize events"""
-        # Only respond to root window resize, not other widgets
-        if event.widget != self.root:
-            return
-
-        # Check if size actually changed significantly
-        current_width = self.root.winfo_width()
-        current_height = self.root.winfo_height()
-
-        width_change = abs(current_width - self.last_width)
-        height_change = abs(current_height - self.last_height)
-
-        if width_change > 50 or height_change > 50:
-            self.last_width = current_width
-            self.last_height = current_height
-
-            # Redraw if we have a document
-            if self.pdf_doc:
-                # Small delay to avoid too many redraws
-                if hasattr(self, "_resize_timer"):
-                    self.root.after_cancel(self._resize_timer)
-                self._resize_timer = self.root.after(200, self.update_canvas)
+                QMessageBox.critical(
+                    self, "Error", f"Failed to extract images: {str(e)}"
+                )
 
     def prev_page(self):
         if self.pdf_doc and self.current_page > 0:
@@ -741,34 +628,79 @@ class PDFImageExtractor:
             return
 
         try:
-            page_num = int(self.page_entry.get()) - 1
+            page_num = int(self.page_entry.text()) - 1
             if 0 <= page_num < len(self.pdf_doc):
                 self.current_page = page_num
                 self.display_page()
             else:
-                messagebox.showwarning(
+                QMessageBox.warning(
+                    self,
                     "Invalid Page",
                     f"Please enter a page number between 1 and {len(self.pdf_doc)}",
                 )
         except ValueError:
-            messagebox.showwarning("Invalid Input", "Please enter a valid page number")
+            QMessageBox.warning(
+                self, "Invalid Input", "Please enter a valid page number"
+            )
 
-    def __del__(self):
+    def goto_page_num(self, page_num):
+        if 0 <= page_num < len(self.pdf_doc):
+            self.current_page = page_num
+            self.display_page()
+
+    def zoom_in(self):
+        self.zoom_level = min(self.zoom_level * 1.25, 4.0)
+        self.zoom_label.setText(f"{int(self.zoom_level * 100)}%")
+        self.display_page()
+
+    def zoom_out(self):
+        self.zoom_level = max(self.zoom_level * 0.8, 0.25)
+        self.zoom_label.setText(f"{int(self.zoom_level * 100)}%")
+        self.display_page()
+
+    def zoom_fit(self):
+        if not self.pdf_doc:
+            return
+
+        page = self.pdf_doc[self.current_page]
+        viewport_width = self.scroll_area.viewport().width()
+        viewport_height = self.scroll_area.viewport().height()
+
+        if viewport_width > 1 and viewport_height > 1:
+            scale_x = viewport_width / (page.rect.width * 2.0)
+            scale_y = viewport_height / (page.rect.height * 2.0)
+            self.zoom_level = min(scale_x, scale_y, 1.0)
+            self.zoom_label.setText(f"{int(self.zoom_level * 100)}%")
+            self.display_page()
+
+    def cleanup_temp_files(self):
+        for temp_file in self.temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except Exception as e:
+                print(f"Error cleaning up temp file: {e}")
+        self.temp_files.clear()
+
+    def closeEvent(self, event):
+        self.cleanup_temp_files()
         if self.pdf_doc:
             self.pdf_doc.close()
+        event.accept()
 
 
 def main():
     """Entry point for the application"""
-    root = tk.Tk()
+    app = QApplication(sys.argv)
 
     # Check for command-line argument (file path)
     initial_file = None
     if len(sys.argv) > 1:
         initial_file = sys.argv[1]
 
-    app = PDFImageExtractor(root, initial_file)
-    root.mainloop()
+    window = PDFImageExtractor(initial_file)
+    window.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
