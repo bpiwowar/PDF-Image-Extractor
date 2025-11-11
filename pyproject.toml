@@ -3,8 +3,8 @@ requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pdf-image-extractor"
-version = "1.0.0"
+name = "extract-pdf-images"
+version = "1.0.1"
 description = "A lightweight GUI tool to visualize and extract images from PDF files"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,7 +33,7 @@ dependencies = [
 ]
 
 [project.scripts]
-pdf-image-extractor = "pdf_image_extractor.app:main"
+extract-pdf-images = "extract_pdf_images.app:main"
 
 [project.urls]
 Homepage = "https://github.com/bpiwowar/pdf-image-extractor"
