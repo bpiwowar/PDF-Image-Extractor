@@ -1,6 +1,6 @@
 # PDF Image Extractor
 
-A lightweight Python application with a GUI to visualize and extract images from PDF files. The app displays PDF pages with red bounding boxes around detected images, allowing you to click on any box to save that image.
+A lightweight Python application with a GUI to visualize and extract images from PDF files.
 
 ## Features
 
@@ -15,6 +15,16 @@ A lightweight Python application with a GUI to visualize and extract images from
 - 💾 **Batch Extract**: Extract all images from the current page at once
 - 🚀 **Pure Python**: No external system dependencies required
 
+## Running
+
+### With uvx (or pipx)
+
+The simplest option
+
+```bash
+uvx extract-pdf-images
+```
+
 ## Installation
 
 ### From Source
@@ -28,29 +38,27 @@ pip install -e .
 ### From PyPI
 
 ```bash
-pip install pdf-image-extractor
+pip install extract-pdf-images
 ```
-
-That's it! No system dependencies needed - PyMuPDF includes everything required.
 
 ## Usage
 
 After installation, run from anywhere using the command:
 
 ```bash
-pdf-image-extractor
+extract-pdf-images
 ```
 
 Or open a PDF directly from the command line:
 
 ```bash
-pdf-image-extractor /path/to/document.pdf
+extract-pdf-images /path/to/document.pdf
 ```
 
 Or run directly from the source directory:
 
 ```bash
-python -m pdf_image_extractor.app [optional-pdf-file]
+python -m extract_pdf_images.app [optional-pdf-file]
 ```
 
 ### Quick Start Guide
