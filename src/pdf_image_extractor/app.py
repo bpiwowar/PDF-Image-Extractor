@@ -53,8 +53,20 @@ class DraggableListWidget(QListWidget):
         self.setDragEnabled(True)
         self.setSelectionMode(QListWidget.SingleSelection)
 
+    def leaveEvent(self, event):
+        """Close preview popup when mouse leaves the list"""
+        if self.parent_app and self.parent_app.preview_popup:
+            self.parent_app.preview_popup.close()
+            self.parent_app.preview_popup = None
+        super().leaveEvent(event)
+
     def startDrag(self, supportedActions):
         """Handle drag start to export image file"""
+        # Close preview popup when starting drag
+        if self.parent_app and self.parent_app.preview_popup:
+            self.parent_app.preview_popup.close()
+            self.parent_app.preview_popup = None
+
         if not self.parent_app or not self.currentItem():
             return
 
@@ -176,58 +188,60 @@ class PDFImageExtractor(QMainWindow):
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(5, 5, 5, 5)
 
-        # Toolbar
+        # Toolbar - compact design
         toolbar = QWidget()
+        toolbar.setMaximumHeight(35)
+        toolbar.setStyleSheet(
+            "QPushButton { padding: 2px 6px; font-size: 12px; } "
+            "QLabel { padding: 0px 3px; }"
+        )
         toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        toolbar_layout.setContentsMargins(0, 0, 0, 5)
+        toolbar_layout.setSpacing(3)
 
         self.open_btn = QPushButton("Open PDF")
         self.open_btn.clicked.connect(self.open_pdf)
         toolbar_layout.addWidget(self.open_btn)
 
-        toolbar_layout.addWidget(QLabel("|"))
-
+        # Navigation
         self.prev_btn = QPushButton("◀")
+        self.prev_btn.setMaximumWidth(30)
         self.prev_btn.clicked.connect(self.prev_page)
         toolbar_layout.addWidget(self.prev_btn)
 
         self.next_btn = QPushButton("▶")
+        self.next_btn.setMaximumWidth(30)
         self.next_btn.clicked.connect(self.next_page)
         toolbar_layout.addWidget(self.next_btn)
 
-        toolbar_layout.addWidget(QLabel("Page:"))
         self.page_entry = QLineEdit()
-        self.page_entry.setMaximumWidth(50)
+        self.page_entry.setMaximumWidth(40)
         self.page_entry.returnPressed.connect(self.goto_page)
         toolbar_layout.addWidget(self.page_entry)
 
-        self.go_btn = QPushButton("Go")
-        self.go_btn.clicked.connect(self.goto_page)
-        toolbar_layout.addWidget(self.go_btn)
-
         self.page_label = QLabel("/ 0")
+        self.page_label.setMinimumWidth(30)
         toolbar_layout.addWidget(self.page_label)
 
-        toolbar_layout.addWidget(QLabel("|"))
-
-        toolbar_layout.addWidget(QLabel("Zoom:"))
+        # Zoom controls
         self.zoom_out_btn = QPushButton("−")
+        self.zoom_out_btn.setMaximumWidth(25)
         self.zoom_out_btn.clicked.connect(self.zoom_out)
         toolbar_layout.addWidget(self.zoom_out_btn)
 
         self.zoom_label = QLabel("100%")
-        self.zoom_label.setMinimumWidth(50)
+        self.zoom_label.setMinimumWidth(40)
         toolbar_layout.addWidget(self.zoom_label)
 
         self.zoom_in_btn = QPushButton("+")
+        self.zoom_in_btn.setMaximumWidth(25)
         self.zoom_in_btn.clicked.connect(self.zoom_in)
         toolbar_layout.addWidget(self.zoom_in_btn)
 
         self.fit_btn = QPushButton("Fit")
+        self.fit_btn.setMaximumWidth(35)
         self.fit_btn.clicked.connect(self.zoom_fit)
         toolbar_layout.addWidget(self.fit_btn)
-
-        toolbar_layout.addWidget(QLabel("|"))
 
         self.extract_all_btn = QPushButton("Extract All")
         self.extract_all_btn.clicked.connect(self.extract_all_images)
