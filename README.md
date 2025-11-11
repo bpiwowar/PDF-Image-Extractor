@@ -5,13 +5,19 @@ A lightweight Python application with a GUI to visualize and extract images from
 ## Features
 
 - 📄 **Visual PDF Navigation**: Browse through PDF pages with Previous/Next buttons or jump to specific pages
-- 🖼️ **Image Visualization**: Red bounding boxes highlight all extractable images on each page
-- 🖱️ **Click to Save**: Simply click any bounding box to extract and save that image
-- 📑 **Page Outline**: Sidebar navigation with PDF TOC support for quick page access
-- 📊 **Image Info Panel**: View details about all images on the current page
+- 🎯 **Popup Image Preview**: Hover over image descriptions to see a popup with the actual extracted image
+- 🖱️ **Click to Save**: Click on image descriptions in the list to extract and save
+- 📑 **Smart Navigation**: 
+  - **Outline Tab**: PDF table of contents with hierarchical navigation
+  - **Thumbnails Tab**: Visual page browser with clickable thumbnails
+- 🔍 **Zoom Controls**: Zoom in/out with +/- buttons or fit page to window
+- 📊 **Image Info Panel**: Interactive list showing all images on the current page
 - 💾 **Batch Extract**: Extract all images from the current page at once
 - 🚀 **Pure Python**: No external system dependencies required (no poppler!)
 - 🎯 **Lightweight**: Uses tkinter (built-in) - no heavy GUI frameworks needed
+- 📐 **Responsive**: Automatically adapts to window resizing
+- ⌨️ **Command-line Support**: Open PDFs directly from the command line
+- 🖼️ **Fit-to-Window**: PDFs automatically fit to window size when opened
 
 ## Installation
 
@@ -39,48 +45,62 @@ After installation, run from anywhere using the command:
 pdf-image-extractor
 ```
 
+Or open a PDF directly from the command line:
+
+```bash
+pdf-image-extractor /path/to/document.pdf
+```
+
 Or run directly from the source directory:
 
 ```bash
-python -m pdf_image_extractor.app
+python -m pdf_image_extractor.app [optional-pdf-file]
 ```
 
 ### Quick Start Guide
 
-1. **Open a PDF**: Click "Open PDF" button and select your PDF file
-2. **Navigate**: Use Previous/Next buttons, or type a page number and click Go
-3. **Use Outline**: Click on TOC entries in the left sidebar to jump to sections
-4. **View Images**: Red boxes show all extractable images on the page
-5. **Extract Image**: Click on any red bounding box to save that image
-6. **Batch Extract**: Click "Extract All Images" to save all images from the current page
+1. **Open a PDF**: Click "Open PDF" button or provide a file path as argument
+2. **Navigate**: 
+   - Use Previous/Next (◀ ▶) buttons or type a page number
+   - Click on entries in the **Outline** tab for TOC navigation
+   - Switch to **Thumbnails** tab for visual page browsing
+3. **View Images**: Check the right panel for a list of all images on the current page
+4. **Preview**: Hover your mouse over any image in the list to see a popup preview
+5. **Extract Image**: Click on an image in the list to save it
+6. **Zoom**: Use +/- buttons to zoom, or click "Fit" to fit page to window (auto-fits on open)
+7. **Batch Extract**: Click "Extract All" to save all images from the current page
 
 ### Interface Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ [Open PDF] [Previous] [Next] Page: [__] Go  [Extract All]  │
-├──────────┬─────────────────────────────────┬────────────────┤
-│ Outline  │  PDF Display Area               │  Images Info   │
-│          │  (with red bounding boxes)      │                │
-│ Chapter 1│                                 │  Image #1      │
-│ ├─ Sec 1 │     ┌─────────┐                 │  Size: 800x600 │
-│ └─ Sec 2 │     │ Image 1 │                 │  Click to save │
-│ Chapter 2│     └─────────┘                 │                │
-│ Page 3   │                                 │  Image #2      │
-│ ...      │         ┌─────┐                 │  Size: 400x300 │
-│          │         │ #2  │                 │  Click to save │
-│          │         └─────┘                 │                │
-└──────────┴─────────────────────────────────┴────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│ [Open] [◀][▶] Page:[__]Go  Zoom:[−]100%[+][Fit]  [Extract All]    │
+├────────────┬──────────────────────────────────┬─────────────────────┤
+│ ┌────────┐ │  PDF Display Area               │  Images on Page     │
+│ │Outline │ │  (clean, no overlays)           │                     │
+│ │Thumbs  │ │                                 │ ┌─────────────────┐ │
+│ └────────┘ │                                 │ │ Image #1  800×600│ │
+│            │                                 │ │ Image #2  400×300│ │ ← Hover
+│ Chapter 1  │                                 │ │ Image #3  600×450│ │
+│ ├─ Sec 1   │          ┌──────────────┐       │ └─────────────────┘ │
+│ └─ Sec 2   │          │ Popup shows  │       │                     │
+│            │          │ actual image │       │ Hover = popup       │
+│ [thumb 1]  │          │  800×600 px  │       │ Click = save        │
+│ [thumb 2]  │          └──────────────┘       │                     │
+│ [thumb 3]  │                                 │                     │
+└────────────┴──────────────────────────────────┴─────────────────────┘
 ```
 
 ## Tips
 
+- **Navigation Methods**: Use keyboard arrows in outline, click thumbnails, or use page number entry
+- **Hover Highlighting**: Move your mouse over the image list to preview each image's location
+- **Zoom Shortcuts**: Use the +/- buttons or "Fit" to quickly adjust view
+- **Window Resize**: The display automatically adjusts when you resize the window
 - **High Quality**: Images are extracted in their original resolution
 - **Supported Formats**: Save as PNG (lossless) or JPEG
-- **Bounding Box Numbers**: Each box is labeled with #1, #2, etc. matching the info panel
-- **Scroll**: Use scrollbars if the PDF page is larger than the display area
-- **TOC Support**: PDFs with table of contents show hierarchical navigation
-- **Multiple Instances**: Same image appearing multiple times shows separate bounding boxes
+- **TOC Support**: PDFs with table of contents show hierarchical navigation in the Outline tab
+- **Multiple Instances**: Same image appearing multiple times shows separate list entries
 
 ## How It Works
 
@@ -95,9 +115,11 @@ The application uses:
 pdf-image-extractor/
 ├── pyproject.toml          # Modern Python packaging configuration
 ├── README.md               # This file
-└── pdf_image_extractor/    # Main package
-    ├── __init__.py         # Package initialization
-    └── app.py              # Main application code
+├── LICENSE                 # MIT License
+└── src/                    # Source directory
+    └── pdf_image_extractor/
+        ├── __init__.py     # Package initialization
+        └── app.py          # Main application code
 ```
 
 ## Development
@@ -146,4 +168,4 @@ black pdf_image_extractor/
 
 ## License
 
-MIT License - Feel free to use and modify as needed.
+MIT License - Feel free to use and modify as needed.****
